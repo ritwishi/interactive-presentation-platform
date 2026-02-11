@@ -5,17 +5,22 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     ghostscript \
     libreoffice-core \
+    libreoffice-writer \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Verify installations
+RUN echo "=== Checking installed tools ===" && \
+    which pdftoppm && pdftoppm -v 2>&1 || echo "pdftoppm not found" && \
+    which gs && gs --version || echo "gs not found" && \
+    which soffice && soffice --version || echo "soffice not found" && \
+    which libreoffice && libreoffice --version || echo "libreoffice not found"
+
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install ALL dependencies (including libreoffice-convert)
 COPY package.json package-lock.json* ./
-
-# Install Node.js dependencies
-RUN npm install --production
+RUN npm install
 
 # Copy application code
 COPY . .
@@ -23,8 +28,6 @@ COPY . .
 # Create required directories
 RUN mkdir -p uploads converted-slides
 
-# Expose port
 EXPOSE 5000
 
-# Start the server
 CMD ["node", "server.js"]

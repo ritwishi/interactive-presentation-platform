@@ -6,72 +6,70 @@ const execPromise = util.promisify(exec);
 
 const CONVERTED_DIR = path.join(__dirname, '..', 'converted-slides');
 
-// Ensure directories exist
 if (!fs.existsSync(CONVERTED_DIR)) {
   fs.mkdirSync(CONVERTED_DIR, { recursive: true });
 }
 
-// ─────────────────────────────────────────────────────────
-//  PPT/PPTX → PDF CONVERSION
-// ─────────────────────────────────────────────────────────
+// ── PPT → PDF ─────────────────────────────────────────────
 
 async function convertPptToPdf(inputPath) {
   console.log('📄 Converting PPT/PPTX to PDF...');
   const outputDir = path.dirname(inputPath);
+  const baseName = path.basename(inputPath, path.extname(inputPath));
+  const pdfPath = path.join(outputDir, `${baseName}.pdf`);
 
-  // Try different possible LibreOffice paths on Windows
-  const possibleCommands = [
-    'soffice',
-    '"C:\\Program Files\\LibreOffice\\program\\soffice.exe"',
-    '"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe"',
-  ];
+  // Determine which commands to try based on platform
+  const isWindows = process.platform === 'win32';
 
-  for (const soffice of possibleCommands) {
+  const commands = isWindows
+    ? [
+        `soffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+        `"C:\\Program Files\\LibreOffice\\program\\soffice.exe" --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+        `"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe" --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+      ]
+    : [
+        `soffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+        `libreoffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+        `/usr/bin/soffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+        `/usr/bin/libreoffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`,
+      ];
+
+  for (const command of commands) {
     try {
-      const command = `${soffice} --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`;
-      console.log(`   📌 Trying: ${soffice}...`);
-      await execPromise(command, { timeout: 60000 });
-
-      const baseName = path.basename(inputPath, path.extname(inputPath));
-      const pdfPath = path.join(outputDir, `${baseName}.pdf`);
-
+      console.log(`   📌 Trying: ${command.substring(0, 60)}...`);
+      await execPromise(command, { timeout: 120000 });
       if (fs.existsSync(pdfPath)) {
-        console.log('   ✅ PPT → PDF conversion successful!');
+        console.log('   ✅ PPT → PDF success!');
         return pdfPath;
       }
     } catch (e) {
-      console.log(`   ⚠️ ${soffice} failed: ${e.message}`);
+      console.log(`   ⚠️ Failed: ${e.message.substring(0, 100)}`);
     }
   }
 
-  // Also try libreoffice-convert npm package
+  // Fallback: try libreoffice-convert npm package
   try {
     console.log('   📌 Trying libreoffice-convert npm package...');
     const libre = require('libreoffice-convert');
     const convertAsync = util.promisify(libre.convert);
     const inputBuffer = fs.readFileSync(inputPath);
     const outputBuffer = await convertAsync(inputBuffer, '.pdf', undefined);
-    const baseName = path.basename(inputPath, path.extname(inputPath));
-    const pdfPath = path.join(outputDir, `${baseName}.pdf`);
     fs.writeFileSync(pdfPath, outputBuffer);
-    console.log('   ✅ PPT → PDF conversion successful (via npm package)!');
-    return pdfPath;
+    if (fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0) {
+      console.log('   ✅ PPT → PDF success (npm package)!');
+      return pdfPath;
+    }
   } catch (e) {
-    console.log(`   ⚠️ libreoffice-convert failed: ${e.message}`);
+    console.log(`   ⚠️ libreoffice-convert npm failed: ${e.message.substring(0, 100)}`);
   }
 
   throw new Error(
-    'Cannot convert PPT/PPTX. Please install LibreOffice: https://www.libreoffice.org/download/'
+    'Cannot convert PPT/PPTX. LibreOffice is not available on the server.'
   );
 }
 
-// ─────────────────────────────────────────────────────────
-//  PDF → IMAGES CONVERSION (multiple methods)
-// ─────────────────────────────────────────────────────────
+// ── PDF → Images ──────────────────────────────────────────
 
-/**
- * Read generated PNG files from output directory
- */
 function readSlideFiles(outputDir, presentationId) {
   const files = fs
     .readdirSync(outputDir)
@@ -81,151 +79,85 @@ function readSlideFiles(outputDir, presentationId) {
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
       return numA - numB;
     });
-
-  if (files.length === 0) {
-    throw new Error('No PNG files were generated');
-  }
-
+  if (files.length === 0) throw new Error('No PNG files generated');
   return files.map((file, index) => ({
     slideNumber: index + 1,
     imagePath: `/converted-slides/${presentationId}/${file}`,
   }));
 }
 
-/**
- * Method 1: Ghostscript (most common on Windows)
- */
-async function convertWithGhostscript(pdfPath, presentationId) {
-  const outputDir = path.join(CONVERTED_DIR, presentationId);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
-  // Try different Ghostscript executable names
-  const gsCommands = ['gswin64c', 'gswin32c', 'gs'];
-  let gsCmd = null;
-
-  for (const cmd of gsCommands) {
-    try {
-      await execPromise(`${cmd} --version`);
-      gsCmd = cmd;
-      break;
-    } catch (e) {
-      // not found, try next
-    }
-  }
-
-  if (!gsCmd) {
-    throw new Error('Ghostscript not found on system');
-  }
-
-  const outputPattern = path.join(outputDir, 'slide-%03d.png');
-  const command = `${gsCmd} -dNOPAUSE -dBATCH -dSAFER -sDEVICE=png16m -r200 -sOutputFile="${outputPattern}" "${pdfPath}"`;
-
-  console.log(`   Running: ${gsCmd}...`);
-  await execPromise(command, { timeout: 120000 });
-
-  return readSlideFiles(outputDir, presentationId);
-}
-
-/**
- * Method 2: Poppler (pdftoppm)
- */
 async function convertWithPoppler(pdfPath, presentationId) {
   const outputDir = path.join(CONVERTED_DIR, presentationId);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
   const outputPrefix = path.join(outputDir, 'slide');
-  const command = `pdftoppm -png -r 200 "${pdfPath}" "${outputPrefix}"`;
-
-  await execPromise(command, { timeout: 120000 });
-
+  await execPromise(`pdftoppm -png -r 150 "${pdfPath}" "${outputPrefix}"`, { timeout: 120000 });
   return readSlideFiles(outputDir, presentationId);
 }
 
-/**
- * Method 3: MuPDF (mutool)
- */
-async function convertWithMutool(pdfPath, presentationId) {
+async function convertWithGhostscript(pdfPath, presentationId) {
   const outputDir = path.join(CONVERTED_DIR, presentationId);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+  const isWindows = process.platform === 'win32';
+  const gsCommands = isWindows ? ['gswin64c', 'gswin32c', 'gs'] : ['gs', 'ghostscript'];
+  let gsCmd = null;
+  for (const cmd of gsCommands) {
+    try { await execPromise(`${cmd} --version`); gsCmd = cmd; break; } catch (e) { /* next */ }
   }
+  if (!gsCmd) throw new Error('Ghostscript not found');
 
   const outputPattern = path.join(outputDir, 'slide-%03d.png');
-  const command = `mutool convert -o "${outputPattern}" -O resolution=200 "${pdfPath}"`;
-
-  await execPromise(command, { timeout: 120000 });
-
+  await execPromise(`${gsCmd} -dNOPAUSE -dBATCH -dSAFER -sDEVICE=png16m -r150 -sOutputFile="${outputPattern}" "${pdfPath}"`, { timeout: 120000 });
   return readSlideFiles(outputDir, presentationId);
 }
 
-// ─────────────────────────────────────────────────────────
-//  MAIN CONVERSION FUNCTION
-// ─────────────────────────────────────────────────────────
+async function convertWithMutool(pdfPath, presentationId) {
+  const outputDir = path.join(CONVERTED_DIR, presentationId);
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+  const outputPattern = path.join(outputDir, 'slide-%03d.png');
+  await execPromise(`mutool convert -o "${outputPattern}" -O resolution=150 "${pdfPath}"`, { timeout: 120000 });
+  return readSlideFiles(outputDir, presentationId);
+}
+
+// ── MAIN ──────────────────────────────────────────────────
 
 async function convertPresentation(filePath, presentationId) {
   const ext = path.extname(filePath).toLowerCase();
   let pdfPath = filePath;
 
-  // STEP 1: If PPT/PPTX, convert to PDF first
   if (ext === '.ppt' || ext === '.pptx') {
     pdfPath = await convertPptToPdf(filePath);
   }
 
-  // STEP 2: Convert PDF to images - try multiple methods
   console.log('🖼️  Converting PDF to slide images...');
 
   const methods = [
-    { name: 'Ghostscript', fn: convertWithGhostscript },
     { name: 'Poppler (pdftoppm)', fn: convertWithPoppler },
+    { name: 'Ghostscript', fn: convertWithGhostscript },
     { name: 'MuPDF (mutool)', fn: convertWithMutool },
   ];
 
   for (const method of methods) {
     try {
       console.log(`   📌 Trying ${method.name}...`);
-
-      // Clean output directory before each attempt
       const outputDir = path.join(CONVERTED_DIR, presentationId);
       if (fs.existsSync(outputDir)) {
-        const existingFiles = fs.readdirSync(outputDir).filter((f) => f.endsWith('.png'));
-        existingFiles.forEach((f) => fs.unlinkSync(path.join(outputDir, f)));
+        fs.readdirSync(outputDir).filter(f => f.endsWith('.png')).forEach(f => fs.unlinkSync(path.join(outputDir, f)));
       }
-
       const slides = await method.fn(pdfPath, presentationId);
-
       if (slides.length > 0) {
-        console.log(`   ✅ Success! ${slides.length} slides converted using ${method.name}`);
-
-        // Cleanup intermediate PDF if PPT was converted
+        console.log(`   ✅ ${slides.length} slides converted using ${method.name}`);
         if ((ext === '.ppt' || ext === '.pptx') && pdfPath !== filePath) {
-          try {
-            fs.unlinkSync(pdfPath);
-          } catch (e) {
-            /* ignore */
-          }
+          try { fs.unlinkSync(pdfPath); } catch (e) { /* ignore */ }
         }
-
         return slides;
       }
     } catch (err) {
-      console.log(`   ⚠️ ${method.name} failed: ${err.message}`);
+      console.log(`   ⚠️ ${method.name} failed: ${err.message.substring(0, 100)}`);
     }
   }
 
-  // ALL METHODS FAILED - give clear instructions
-  throw new Error(
-    'Could not convert PDF to images. Please install Ghostscript:\n\n' +
-      '  1. Go to: https://ghostscript.com/releases/gsdnld.html\n' +
-      '  2. Download "Ghostscript 10.x AGPL Release" for Windows (64-bit)\n' +
-      '  3. During install, CHECK ✅ "Add to PATH"\n' +
-      '  4. CLOSE and REOPEN your terminal / VS Code\n' +
-      '  5. Verify by running: gswin64c --version\n' +
-      '  6. Then restart the backend: npm run dev'
-  );
+  throw new Error('PDF conversion failed. No conversion tool available on the server.');
 }
 
 module.exports = { convertPresentation };
