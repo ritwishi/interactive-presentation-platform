@@ -86,13 +86,14 @@ sudo apt install libreoffice
 ### Step 5: Install Ghostscript (for PDF to image conversion)
 
 **Windows:**
-- ' Could not convert PDF to images. Please install Ghostscript:\n\n' +
-  '  1. Go to: https://ghostscript.com/releases/gsdnld.html\n' +
-  '  2. Download "Ghostscript 10.x AGPL Release" for Windows (64-bit)\n' +
-  '  3. During install, CHECK ✅ "Add to PATH"\n' +
-  '  4. CLOSE and REOPEN your terminal / VS Code\n' +
-  '  5. Verify by running: gswin64c --version\n' +
-  '  6. Then restart the backend: npm run dev'
+-
+    ' Could not convert PDF to images. Please install Ghostscript:\n\n' +
+    '  1. Go to: https://ghostscript.com/releases/gsdnld.html\n' +
+    '  2. Download "Ghostscript 10.x AGPL Release" for Windows (64-bit)\n' +
+    '  3. During install, CHECK ✅ "Add to PATH"\n' +
+    '  4. CLOSE and REOPEN your terminal / VS Code\n' +
+    '  5. Verify by running: gswin64c --version\n' +
+    '  6. Then restart the backend: npm run dev'
 
 
 
