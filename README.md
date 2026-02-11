@@ -2,7 +2,7 @@
 
 A real-time interactive classroom presentation platform where teachers present slides and students join live sessions to participate in activities (MCQ/Open-ended) embedded within the presentation flow.
 
-**Built by:** Aleesha Mufthi A S  
+**Built by:** Ritwik Shivankar  
 **Tech Stack:** React + Node.js + Express + MongoDB + Socket.IO
 
 ---
